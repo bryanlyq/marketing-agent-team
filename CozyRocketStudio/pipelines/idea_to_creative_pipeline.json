@@ -1,0 +1,462 @@
+{
+  "name": "Idea to Creative Pipeline",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1200, 0],
+      "id": "2c3d4e5f-0001-0001-0001-000000000001",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── ADD YOUR IDEAS AND SETTINGS HERE ───────────────────────────────────────\nconst OPENROUTER_API_KEY = 'YOUR_OPENROUTER_API_KEY_HERE';\nconst WAVESPEED_API_KEY  = 'YOUR_WAVESPEED_API_KEY_HERE';\nconst LLM_MODEL          = 'anthropic/claude-3-5-haiku';\nconst IMAGE_MODEL        = 'bytedance/seedream-v4';\nconst IMAGE_SIZE         = '1024*1024';\nconst GDRIVE_FOLDER_ID   = '1Czg44HSJiJxPB9tJxDS6-6NOCJXqjiuS';\n\nconst ideas = [\n  'A cozy autumn coffee shop scene with warm lighting',\n  'Futuristic smart city with flying cars and holographic billboards',\n  'Serene beachside yoga session at golden hour'\n];\n// ─────────────────────────────────────────────────────────────────────────────\n\n// Returns one item per idea — each flows through the full pipeline independently\nreturn ideas.map(idea => ({\n  json: { idea, OPENROUTER_API_KEY, WAVESPEED_API_KEY, LLM_MODEL, IMAGE_MODEL, IMAGE_SIZE, GDRIVE_FOLDER_ID }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1000, 0],
+      "id": "2c3d4e5f-0002-0002-0002-000000000002",
+      "name": "Define Ideas"
+    },
+    {
+      "parameters": {
+        "jsCode": "const idea = $json.idea;\nconst model = $json.LLM_MODEL;\n\nconst systemPrompt = `You are a creative content strategist for social media.\nGiven an idea, produce a complete content package.\n\nRespond ONLY with valid JSON — no markdown fences, no extra text:\n{\n  \"hook\": \"A compelling 1–2 sentence opening that stops the scroll\",\n  \"image_prompt\": \"A richly detailed image generation prompt covering subject, style, lighting, composition, colour palette, and mood\",\n  \"caption\": \"An engaging social media caption ending with 3–5 relevant hashtags\"\n}`;\n\nconst requestBody = {\n  model: model,\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user',   content: `Create a content package for this idea: ${idea}` }\n  ],\n  response_format: { type: 'json_object' },\n  temperature: 0.8,\n  max_tokens: 800\n};\n\nreturn [{\n  json: {\n    ...$json,\n    openrouter_body: JSON.stringify(requestBody)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-800, 0],
+      "id": "2c3d4e5f-0003-0003-0003-000000000003",
+      "name": "Build LLM Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.OPENROUTER_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.openrouter_body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-600, 0],
+      "id": "2c3d4e5f-0004-0004-0004-000000000004",
+      "name": "Generate Content"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawContent = $input.item.json.choices[0].message.content;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(rawContent);\n} catch (e) {\n  // Strip markdown code fences if the model wrapped its output\n  const match = rawContent.match(/```(?:json)?\\s*([\\s\\S]*?)\\s*```/);\n  if (match) {\n    parsed = JSON.parse(match[1]);\n  } else {\n    throw new Error('LLM response is not valid JSON: ' + rawContent.slice(0, 300));\n  }\n}\n\nconst cfg = $('Define Ideas').item.json;\n\nreturn [{\n  json: {\n    idea:             cfg.idea,\n    hook:             parsed.hook,\n    image_prompt:     parsed.image_prompt,\n    caption:          parsed.caption,\n    WAVESPEED_API_KEY: cfg.WAVESPEED_API_KEY,\n    IMAGE_MODEL:      cfg.IMAGE_MODEL,\n    IMAGE_SIZE:       cfg.IMAGE_SIZE,\n    LLM_MODEL:        cfg.LLM_MODEL,\n    GDRIVE_FOLDER_ID: cfg.GDRIVE_FOLDER_ID\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-400, 0],
+      "id": "2c3d4e5f-0005-0005-0005-000000000005",
+      "name": "Parse LLM Response"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.wavespeed.ai/api/v3/{{ $json.IMAGE_MODEL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.WAVESPEED_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "enable_base64_output",
+              "value": "false"
+            },
+            {
+              "name": "enable_sync_mode",
+              "value": "false"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.image_prompt }}"
+            },
+            {
+              "name": "size",
+              "value": "={{ $json.IMAGE_SIZE }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-200, 0],
+      "id": "2c3d4e5f-0006-0006-0006-000000000006",
+      "name": "Submit Image Job"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ctx-001",
+              "name": "request_id",
+              "value": "={{ $json.data.id }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-002",
+              "name": "poll_url",
+              "value": "={{ $json.data.urls.get }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-003",
+              "name": "idea",
+              "value": "={{ $('Parse LLM Response').item.json.idea }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-004",
+              "name": "hook",
+              "value": "={{ $('Parse LLM Response').item.json.hook }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-005",
+              "name": "image_prompt",
+              "value": "={{ $('Parse LLM Response').item.json.image_prompt }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-006",
+              "name": "caption",
+              "value": "={{ $('Parse LLM Response').item.json.caption }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-007",
+              "name": "image_model",
+              "value": "={{ $('Parse LLM Response').item.json.IMAGE_MODEL }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-008",
+              "name": "llm_model",
+              "value": "={{ $('Parse LLM Response').item.json.LLM_MODEL }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-009",
+              "name": "image_size",
+              "value": "={{ $('Parse LLM Response').item.json.IMAGE_SIZE }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-010",
+              "name": "submitted_at",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-011",
+              "name": "gdrive_folder_id",
+              "value": "={{ $('Parse LLM Response').item.json.GDRIVE_FOLDER_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "ctx-012",
+              "name": "WAVESPEED_API_KEY",
+              "value": "={{ $('Parse LLM Response').item.json.WAVESPEED_API_KEY }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [0, 0],
+      "id": "2c3d4e5f-0007-0007-0007-000000000007",
+      "name": "Store Job Context"
+    },
+    {
+      "parameters": {
+        "amount": 15
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [200, 0],
+      "id": "2c3d4e5f-0008-0008-0008-000000000008",
+      "name": "Initial Wait",
+      "webhookId": "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Store Job Context').item.json.poll_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Store Job Context').item.json.WAVESPEED_API_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [400, 0],
+      "id": "2c3d4e5f-0009-0009-0009-000000000009",
+      "name": "Poll Job Status",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cond-001",
+              "leftValue": "={{ $json.data.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [600, 0],
+      "id": "2c3d4e5f-0010-0010-0010-000000000010",
+      "name": "Job Complete?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Store Job Context').item.json;\nconst imageUrl = $input.item.json.data.outputs[0];\nconst completedAt = new Date().toISOString();\n\nconst timestamp = completedAt\n  .replace('T', '_')\n  .replace(/:/g, '-')\n  .slice(0, 19);\n\nconst sanitizedIdea = ctx.idea\n  .toLowerCase()\n  .replace(/[^a-z0-9\\s]/g, '')\n  .trim()\n  .replace(/\\s+/g, '_')\n  .replace(/_{2,}/g, '_')\n  .slice(0, 40)\n  .replace(/_+$/, '');\n\nconst modelSlug = ctx.image_model.split('/').pop();\nconst baseName = `${sanitizedIdea}_${timestamp}_${modelSlug}`;\n\nreturn [{\n  json: {\n    base_name:             baseName,\n    image_file_name:       `${baseName}.png`,\n    metadata_file_name:    `${baseName}_metadata.json`,\n    idea:                  ctx.idea,\n    hook:                  ctx.hook,\n    image_prompt:          ctx.image_prompt,\n    caption:               ctx.caption,\n    image_model:           ctx.image_model,\n    llm_model:             ctx.llm_model,\n    image_size:            ctx.image_size,\n    request_id:            ctx.request_id,\n    submitted_at:          ctx.submitted_at,\n    completed_at:          completedAt,\n    image_url:             imageUrl,\n    gdrive_folder_id:      ctx.gdrive_folder_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [820, -180],
+      "id": "2c3d4e5f-0011-0011-0011-000000000011",
+      "name": "Generate File Name"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.image_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1040, -180],
+      "id": "2c3d4e5f-0012-0012-0012-000000000012",
+      "name": "Download Image"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "={{ $('Generate File Name').item.json.image_file_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Generate File Name').item.json.gdrive_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1260, -180],
+      "id": "2c3d4e5f-0013-0013-0013-000000000013",
+      "name": "Upload Image",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "KM9OwALPjFdCsIhN",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fileMeta = $('Generate File Name').item.json;\nconst driveResponse = $input.item.json;\n\nconst metadata = {\n  request_id:            fileMeta.request_id,\n  idea:                  fileMeta.idea,\n  hook:                  fileMeta.hook,\n  image_prompt:          fileMeta.image_prompt,\n  caption:               fileMeta.caption,\n  image_model:           fileMeta.image_model,\n  llm_model:             fileMeta.llm_model,\n  image_size:            fileMeta.image_size,\n  submitted_at:          fileMeta.submitted_at,\n  completed_at:          fileMeta.completed_at,\n  image_file_name:       fileMeta.image_file_name,\n  google_drive_file_id:  driveResponse.id || '',\n  google_drive_web_link: driveResponse.webViewLink || '',\n  pipeline_version:      '1.0'\n};\n\nconst metadataString = JSON.stringify(metadata, null, 2);\n\nconst binaryData = await this.helpers.prepareBinaryData(\n  Buffer.from(metadataString, 'utf-8'),\n  fileMeta.metadata_file_name,\n  'application/json'\n);\n\nreturn [{\n  json: {\n    ...fileMeta,\n    metadata_json:        metadataString,\n    google_drive_file_id: driveResponse.id || '',\n    google_drive_web_link: driveResponse.webViewLink || ''\n  },\n  binary: { data: binaryData }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, -180],
+      "id": "2c3d4e5f-0014-0014-0014-000000000014",
+      "name": "Prepare Metadata"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "={{ $json.metadata_file_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.gdrive_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1700, -180],
+      "id": "2c3d4e5f-0015-0015-0015-000000000015",
+      "name": "Upload Metadata",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "KM9OwALPjFdCsIhN",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 10
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [820, 180],
+      "id": "2c3d4e5f-0016-0016-0016-000000000016",
+      "name": "Retry Wait",
+      "webhookId": "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [{ "node": "Define Ideas", "type": "main", "index": 0 }]
+      ]
+    },
+    "Define Ideas": {
+      "main": [
+        [{ "node": "Build LLM Request", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build LLM Request": {
+      "main": [
+        [{ "node": "Generate Content", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Content": {
+      "main": [
+        [{ "node": "Parse LLM Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse LLM Response": {
+      "main": [
+        [{ "node": "Submit Image Job", "type": "main", "index": 0 }]
+      ]
+    },
+    "Submit Image Job": {
+      "main": [
+        [{ "node": "Store Job Context", "type": "main", "index": 0 }]
+      ]
+    },
+    "Store Job Context": {
+      "main": [
+        [{ "node": "Initial Wait", "type": "main", "index": 0 }]
+      ]
+    },
+    "Initial Wait": {
+      "main": [
+        [{ "node": "Poll Job Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Poll Job Status": {
+      "main": [
+        [{ "node": "Job Complete?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Job Complete?": {
+      "main": [
+        [{ "node": "Generate File Name", "type": "main", "index": 0 }],
+        [{ "node": "Retry Wait",         "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate File Name": {
+      "main": [
+        [{ "node": "Download Image", "type": "main", "index": 0 }]
+      ]
+    },
+    "Download Image": {
+      "main": [
+        [{ "node": "Upload Image", "type": "main", "index": 0 }]
+      ]
+    },
+    "Upload Image": {
+      "main": [
+        [{ "node": "Prepare Metadata", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Metadata": {
+      "main": [
+        [{ "node": "Upload Metadata", "type": "main", "index": 0 }]
+      ]
+    },
+    "Upload Metadata": {
+      "main": [[]]
+    },
+    "Retry Wait": {
+      "main": [
+        [{ "node": "Poll Job Status", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "2c3d4e5f-0000-0000-0000-000000000001",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0a9c9998254bfbb664605280862f22addf7002a3929722f3a25c46df75dda987"
+  },
+  "id": "IdeaToCreativePipeline",
+  "tags": []
+}
